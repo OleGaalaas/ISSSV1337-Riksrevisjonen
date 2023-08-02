@@ -1,0 +1,857 @@
+---
+title: "ISSSV1337 OAG report"
+author: "Isra Ahmed, Abhaiveer Tuli and Ole Magnus Gaalaas-Hansen"
+format: pdf
+editor: visual
+embed-resources: true
+execution: 
+  echo: true
+  message: false
+  eval: true
+  output: true
+  warnings: false
+---
+
+## Shiny app is here:
+
+https://olemagnusgaalaashansen.shinyapps.io/ISSSV1337-Hackathon/
+
+Github repository: https://github.com/OleGaalaas/ISSSV1337-Riksrevisjonen
+
+## Introduction
+
+The Office of the Auditory General has assigned this group with the task of finding out more about the quality, efficiency and productivity of Norwegian schools. The main problem is that even though Norway spend significantly more money on schools compared to other OECD countries, Norway still preform worse in international surveys such as the PISA test. Our goal for this report is to find, explore and analyse Norwegian school data on order to find out what policy changes that might improve the Norwegian results on grades.
+
+Firstly, we want to address our disagreement with using international surveys such as the PISA test for comparing the learning results between countries. Norway´s main policy on school is focused on depth learning, which is *"about students gradually developing their understanding of concepts and relationships within a subject area. It is also about understanding themes and problems that cut across subject or knowledge areas. Deep learning involves students using their ability to analyse, solve problems and reflect on their own learning to construct a comprehensive and lasting understanding." (Nou, 2014 find source later).* We do not believe the PISA test is a accurate way of measuring depth learning and the creation of educated people. Even though Norway got the 19th rankin on the PISA test in 2018, it is still one of the highest educated countries in the world.(source)
+
+## How high schools in Vestland perform:
+
+We have gotten the task of visualizing Vestland county performance
+
+In order to say something meaningful about how high schools in Vestlandet county perform it is important to look at the grade distribution and how grades have performed over time.
+
+```{r}
+setwd("~/Documents/ISSSV1337-Hackathon")
+pacman::p_load(tidyverse, csmaps, ggtext, scico, mapproj, osmdata, tmaptools, csdata, mapview, sf, viridis, stargazer)
+vgo <- readRDS("~/Documents/ISSSV1337-Hackathon/vgo.RDS")
+vgo_karakter <- vgo[["grades"]]
+
+vgo_karakter2022 <- vgo_karakter %>% filter(aar == "2021-22", type == "Begge")
+
+Vgo_schools <- vgo[["schools"]]
+vgo_expence <- vgo[["expenditure"]]
+vgo_bidrag <-vgo[["school_contribution"]]
+student <-vgo[["students"]]
+
+Vgo_combined <- left_join(vgo_karakter2022, Vgo_schools, by = "organisasjonsnummer")
+
+Vgo_vestlandet_grades <- Vgo_combined %>% filter(fylkesnr == 46) 
+
+Vgo_snittkarakter <- Vgo_vestlandet_grades %>%
+  group_by(enhetnavn, aar, lon, lat) %>%
+  summarise(mean_grade = mean(snittkarakter, na.rm = T))
+
+#This is not a 100% percent accurate on the whole of norway, but is suprisingly accurate in Vestland county 
+Vgo_snittkarakter$type <- ifelse(grepl("skule$|skole$", Vgo_snittkarakter$enhetnavn), "Public", "Private")
+
+
+
+ggplot(na.omit(Vgo_snittkarakter), aes(x = reorder(enhetnavn, -mean_grade), y = mean_grade, fill = type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme(axis.text.y = element_text(size = 6, angle = 0, hjust = 1)) +
+  ylab("Average grade") +
+  xlab("School") +
+  ggtitle("Average grade for high schools in Vestlandet") 
+
+```
+
+In this graph we see that the grades averages around 4, which is what we would expect. The lowest grades (by quite some margin) are in Akademiet Bergen which is a private school that focuses on "exam leaned learning" (first sentence in their "about us" page on their website) and so called "privatist" exams. They were also praised by the ministry of education as the best school in Vestlandet county. While one could find this ironic it might also point some big flaws in using the grades as a dependent variable. We do not believe that the ministry of education are wrong. This could perhaps mean that there is something that "ruins" the grade score (perhaps privatist student), or as we believe it might be measuring quite more variables the make them better.
+
+The highest scoring school is Kongshaugen Musikkgymnas which is a "friskole" a non-public school which focus on music. This is a school which is very difficult to get into and we belive the grades reflect that. it could also be the case that students who voluntarily starts in a music school are more motivated and interested in music subjects and would therefore do better than students who start public education.
+
+The main takeaway that we get from it is that public schools seems to be more similar in grade distribution and that there are more spread in the grades of private schools.
+
+### Grades over time
+
+```{r}
+Vgo_combined_time <- left_join(vgo_karakter, Vgo_schools, by = "organisasjonsnummer")
+
+Vestlandet_grades_time <- Vgo_combined_time %>% filter(fylkesnr == 46, type == "Begge")
+
+Vgo_snittkarakter_time <- Vestlandet_grades_time %>%
+  group_by(aar) %>%
+  summarise(mean_grade = mean(snittkarakter, na.rm = T))
+Vgo_snittkarakter_time$aar_numeric <- as.numeric(substr(Vgo_snittkarakter_time$aar, 1, 4))
+
+ggplot(Vgo_snittkarakter_time, aes(aar_numeric, mean_grade)) + 
+  geom_line() + 
+  xlab("year") + 
+  ylab("mean grade") + 
+  ggtitle("Mean grade of schools in vestlandet over time") + 
+  theme_bw()
+```
+
+The mean grade has in all schools in Vestlandet has increased over time, especially during the covid-19 pandemic.
+
+```{r}
+# comparison between mean grade in Vestland and Norway
+
+# Step 1: Calculate the mean grade for every year in Norway, including Vestland
+student_eval <- read_csv("student_eval.csv")
+
+norway_mean_grade <- student_eval %>%
+  group_by(aar) %>%
+  summarize(Norway_Mean_Grade = mean(snittkarakter))
+
+# Step 2: Calculate the mean grade for Vestland county for every year
+vestland_meang <- student_eval %>%
+  filter(fylke == "Vestland") %>%
+  group_by(aar) %>%
+  summarize(Vestland_Mean_Grade = mean(snittkarakter))
+
+# Step 3: Merge both datasets to get comparison data
+comparison_data <- merge(norway_mean_grade, vestland_meang, by = "aar")
+
+# Step 4: Calculate the comparison value (Vestland Mean Grade / Norway Mean Grade) for each year
+comparison_data$Comparison_Value <- comparison_data$Vestland_Mean_Grade / comparison_data$Norway_Mean_Grade
+
+# Print the comparison data
+print(comparison_data)
+
+# to plot it 
+
+comparison_data %>% 
+  ggplot(aes(x = aar, y = Comparison_Value)) +
+  geom_line() +
+  labs(x = "Years", y = "Comparison Value") +
+  theme_bw() +
+  ggtitle("Comparison in mean grade") +
+  scale_y_continuous(labels = scales::comma)
+```
+
+When we compare the grades in Vestlandet based on the national average we see a different story. We see that Vestlandet performs better than the national average but, when the grades in Vestlandet increased, the national average is "catching up" to Vestlandet
+
+## Mapping schools and centrality
+
+```{r}
+
+Map_norge <- st_read("gadm41_NOR_shp/gadm41_NOR_0.shp")
+Map_gammel_fylke <- st_read("gadm41_NOR_shp/gadm41_NOR_1.shp")
+Map_kommune <- st_read("gadm41_NOR_shp/gadm41_NOR_2.shp")
+
+Map_norge_snittkarakter <- Vgo_snittkarakter %>%
+  drop_na(lon, lat) %>%
+  st_as_sf(coords = c("lon", "lat"), remove = TRUE)
+
+Map_norge_snittkarakter <- Map_norge_snittkarakter %>% 
+  st_set_crs(4326)
+
+student$organisasjonsnummer <- as.character(student$organisasjonsnummer)
+student_vest <- left_join(student, Vgo_schools, by = "organisasjonsnummer")
+
+student_vest <- student_vest %>% filter(fylkesnr == 46) 
+student_vest_2021 <- student_vest %>% filter(aar == "2021-22", type == "Begge")
+
+student_vest_2021 <- student_vest_2021[complete.cases(student_vest_2021$antall_elever), ]
+
+ggplot(student_vest_2021, aes(x = reorder(enhetnavn, -antall_elever), y = antall_elever)) +
+  geom_bar(stat = "identity") + 
+  coord_flip() +
+  theme(axis.text.y = element_text(size = 6, angle = 0, hjust = 1)) +
+  ylab("Number of students") +
+  xlab("School") + 
+  ggtitle("Number of students in high schools in Vestlandet")
+
+
+Map_student_antall <- student_vest_2021 %>%
+  drop_na(lon, lat) %>%
+  st_as_sf(coords = c("lon", "lat"), remove = TRUE)
+
+Map_student_antall <- Map_student_antall %>% 
+  st_set_crs(4326)
+
+ggplot() + 
+  geom_sf(data = Map_norge) + 
+  geom_sf(data = Map_kommune) + 
+  geom_sf(data = Map_student_antall, color = "firebrick", alpha = 0.7, size = Map_student_antall$antall_elever/150) +
+  coord_sf(xlim = c(4, 8), ylim = c(59.8, 62)) +
+  theme_minimal() + 
+  ggtitle("Size of schools in Vestland county")
+
+```
+
+We see that there is quite a lot of variation in the size of schools in Vestland ranging from under 50 to over 1000 students.
+
+```{r}
+
+library(openxlsx)
+sentralitet_2023_2024_kommuner <- read.xlsx("sentralitet 2023-2024 kommuner.xlsx") 
+
+Map_sentral <- Map_kommune %>% 
+  left_join(sentralitet_2023_2024_kommuner, by = c("NAME_2" = "Kommune.2024"))
+
+ggplot() +
+  geom_sf(data = Map_norge) +
+  geom_sf(data = Map_sentral, aes(fill = Indeks.2023)) +
+  geom_sf(data = Map_student_antall, color = "firebrick", alpha = 0.7, size = Map_student_antall$antall_elever/200) +
+  coord_sf(xlim = c(4, 8), ylim = c(59.8, 62)) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", name = "centrality index") +
+  theme_minimal() +
+  ggtitle("Size of schools compared to the sentrality")
+
+Vgo_snittkarakter <- Vgo_snittkarakter %>% left_join(student_vest_2021, by = "enhetnavn")
+
+sentralitet_2023_2024_kommuner$Kommune.2024 <- str_to_upper(sentralitet_2023_2024_kommuner$Kommune.2024)
+
+Vgo_sentral <- Vgo_snittkarakter %>% left_join(sentralitet_2023_2024_kommuner, by = c("kommune" = "Kommune.2024"))
+
+Vgo_sentral %>% 
+  ggplot(aes(x = Vgo_sentral$Indeks.2023, y = Vgo_sentral$mean_grade)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") +
+  xlab("Sentrality of the schools kommune") + 
+  ylab("average grade") +
+  ggtitle("How does the centrality effect the mean grade of the school") +
+  theme_bw()
+```
+
+In this plot we see that the most schools (and the biggest schools) are are located in the most central areas. We also see that contrary to our belief it does not seem that grades and centrality correlate. Instead the most central municipality (Bergen) has a lot of variation in the municipality with both the lowest and some of the highest grades.
+
+## Expenditures
+
+```{r}
+
+counties_filter <- subset(vgo_expence, fylke %in% c("Hordaland", "Vestland", "Sogn og Fjordane"))
+
+```
+
+```{r eval=FALSE}
+ library(tidyr)
+GDP_Deflator <- read_csv("GDP_Deflator.csv")
+
+GDP_long <- GDP_Deflator %>% pivot_longer(cols=5:67,
+                    names_to='aar',
+                    values_to='inflation')
+
+Exp_inf <- merge(counties_filter, GDP_long, by = "aar", all.x = TRUE)
+
+ Exp_inf2 <-Exp_inf %>%
+  mutate(real_expenses = sum / abs(inflation))
+```
+
+```{r}
+
+Exp_inf2 <- read_csv("Exp_inf2.csv")
+
+counties_filter %>% 
+  filter(indikatornavn == "Korrigerte brutto driftsutgifter per elev") %>% 
+  ggplot(aes(x = aar, y = sum, shape = fylke)) +
+  geom_point() +
+  labs(x = "Years", y = "Expenses", color = "County") +
+  theme_bw() +
+  ggtitle("Expenditures in Hordaland, Sogn og Fjordane, and  Vestland")
+
+Exp_inf2 %>% 
+  filter(indikatornavn == "Korrigerte brutto driftsutgifter per elev") %>% 
+  ggplot(aes(x = aar, y = real_expenses, shape = fylke)) +
+  geom_point() +
+  labs(x = "Years", y = "real expenditure", color = "County") +
+  theme_bw() +
+  ggtitle("Real Expenditures in Hordaland, Sogn og Fjordane, and  Vestland") +
+  scale_y_continuous(labels = scales::comma)
+```
+
+in this graphs we analysed the educational expenditure in Vestland and the two merged counties, we see that the expenditure is significantly higher before merging the counties for example the amount spent in Hordaland is more than the amount spent in Vestland. to investigate that we took into account the inflation to see the real value for the expenditure and it is still showing the same results that the expenditure decreased significantly after merging the two counties.
+
+### National expenditures and grades
+
+```{r}
+
+library(klassR)
+codes <- GetKlass(104)
+
+codes <- codes %>%
+  mutate(name = ifelse(grepl("Troms og Finnmark", name), "Troms og Finnmark", name),
+         name = ifelse(grepl("Trøndelag ",name), "Trøndelag",name)
+         )
+
+student_exp<-vgo[["expenditure"]]
+student_exp <- student_exp %>%
+  mutate(
+    fylke = ifelse(grepl("Troms og Finnmark", fylke), "Troms og Finnmark", fylke),
+    fylke = ifelse(grepl("Troms Romsa", fylke), "Troms og Finnmark", fylke),
+    fylke = ifelse(grepl("Troms of Finmark", fylke), "Troms og Finnmark", fylke),
+    fylke = ifelse(grepl("Trøndelag", fylke), "Trøndelag", fylke),
+    fylke = ifelse(grepl("Troms og Finnmark - Romsa ja Finnmárku - Tromssa ja Finma", fylke), "Troms og Finnmark", fylke),
+    fylke = ifelse(grepl("Nordland", fylke), "Nordland - Nordlánnda", fylke)
+  )
+
+student_exp<-student_exp %>% 
+  left_join(codes, by = c("fylke"= "name") )
+
+student_exp<-student_exp %>% 
+  select(-c(parentCode,level))
+
+student_exp <- student_exp %>% 
+  rename("fylkesnr" = "code")
+
+
+Grade<- vgo[["grades"]]
+school<- vgo[["schools"]]
+Grade$aar <- substr(Grade$aar, 1, 4)
+Grade<-Grade %>% 
+  mutate(enhetnavn = str_to_upper(enhetnavn))
+
+
+Grade <- Grade %>%
+  left_join(school, by = c("enhetnavn"="navn"))
+Grade<-Grade %>%
+  rename("organisasjonsnummer" = "organisasjonsnummer.x")
+Grade<-Grade %>% 
+  select(-c(organisasjonsnummer.y))
+
+graded_expenses<- merge(Grade, student_exp, by = "fylkesnr")
+
+graded_expenses_begge <- filter(graded_expenses, type == "Begge")
+
+ Vgo_graded_sum <- graded_expenses_begge %>%
+  group_by(enhetnavn, aar.y, sum) %>%
+  summarise(mean_grade = mean(snittkarakter, na.rm = T))
+ 
+ ggplot(Vgo_graded_sum,aes(x = mean_grade, y = sum, color = aar.y,group = 1))+
+   geom_point()+
+   geom_smooth(method = "lm") +
+   theme_bw() + 
+   ggtitle("Expenditure and the mean grade")
+```
+
+## Dropouts
+
+Dropouts could be seen as a good way of measuring a schools performance. Firstly it is a political goal that all students finish upper secondary schooling (videregående skole). Secondly having a high dropout rate could be seen as an ineffective use of resources, spending a lot of money on students who do not finish school. Finally it could be seen as a measure of the quality of the school and if those resources are spent wisely. It also points some at our previous point that even the school with the lowest grade it is ranked as the best school in Vestlandet. Just exemplify this point you could make a school where 90 percent of the students drop out, but the few that remain get really high grades, we would not consider this as a "good" school or an example the Norwegian government to follow further.
+
+```{r}
+Dropout_Dataset <- read.xlsx("20230420-1546_Slutta_VGO.xlsx")
+
+Dropout_clean <- Dropout_Dataset %>% pivot_longer(cols=8:33,
+                    names_to='aar',
+                    values_to='dropout')
+# to remove the total number of dropout 
+
+# Assuming the column name is "dropout_column"type
+# at first we seperates the columns for total and percentage then we seperated the year and identifaied the school year format then we made it wider by adding new columns for percentage, year, and dropout. 
+
+Dropout_clean2 <- Dropout_clean %>% 
+  mutate(type = ifelse(str_detect(aar, "Antall"), "antall", "andel"),
+         school_year = str_extract(aar, "\\d{4}\\-\\d{2}")) %>% 
+  select(-aar) %>% 
+  pivot_wider(names_from = type, values_from = dropout)
+# dataset after removing all characters 
+
+
+filtered_data <- Dropout_clean2 %>%
+  filter(!(grepl("^c| ^NANA |^\\*", andel)))
+ 
+
+# replace with NA 
+
+filtered_data$andel[filtered_data$andel == "NANA"] <- NA
+# another try 
+# Replace any string values representing missing values with NA
+filtered_data$andel <- ifelse(filtered_data$andel == "NANA", NA, filtered_data$andel)
+filtered_data$antall <- ifelse(filtered_data$antall == "NANA", NA, filtered_data$antall)
+
+#Because i used pivot wider now the coumns are turned into a list instead pf numeric variable, to fix that i will use
+
+# Convert the column from list to numeric
+filtered_data$andel <- as.numeric(filtered_data$andel)
+
+filtered_data$antall <- as.numeric(filtered_data$antall)
+
+filtered_data $Fylke[filtered_data$Fylke == "Alle fylker"] <- "Norway"
+
+dropouts_Norway <- filtered_data %>% filter(Fylke == "Norway")
+
+dropouts_Norway$aar_numeric <- as.numeric(substr(dropouts_Norway$school_year, 1, 4))
+
+ggplot(dropouts_Norway, aes(x = aar_numeric, y = andel)) +
+  geom_line() + 
+  theme(axis.text.y = element_text(size = 5, angle = 0, hjust = 1)) +
+  ylab("Percentage of dropouts") +
+  xlab("school year") + 
+  ggtitle("Percentage of dropouts in high schools in Norway") +
+  theme_bw()
+
+```
+
+In this graph we see the mean dropout in VGOs in the whole of Norway. It seems to be a steady decline until 2020 and the start of the Covid-19 pandemic where it makes sense that dropouts might occur, and is does not seem to be consequence of long term policy but rather just an effect of the pandemic. Next we look at the dropouts in Vestlandet
+
+```{r}
+
+
+dropouts_Vestland <- filtered_data %>% filter(Fylke == c("Vestland"))
+
+mean_dropout_Vestland <- dropouts_Vestland %>%
+  filter(Fylke == "Vestland") %>%
+  group_by(school_year) %>%
+  summarize(mean_dropout_rate = mean(andel, na.rm = TRUE))
+
+mean_dropout_Vestland$aar_numeric <- as.numeric(substr(mean_dropout_Vestland$school_year, 1, 4))
+
+ggplot(mean_dropout_Vestland, aes(x = aar_numeric, y = mean_dropout_rate)) +
+  geom_line() + 
+  theme(axis.text.y = element_text(size = 5, angle = 0, hjust = 1)) +
+  ylab("Percentage of dropouts") +
+  xlab("school year") + 
+  ggtitle("Mean percentage of dropouts in high schools in Vestland") +
+  theme_bw()
+```
+
+In Vestlandet we see a quite similar story as the whole of Norway with a stead decline until the pandemic.
+
+### Lasso modelling for predicting dropouts
+
+We are using a lasso model for the student survey in order to find out the correlation between the questions and dropout rate. this is also useful to identify what variables that we might want to further investigate.
+
+```{r}
+#the first step is to merge all the data in one dataset to do so we should prepare all the data in the mean value for the two variables
+
+grades_data <- read_csv("grades_data.csv")
+
+mean_grade_Vestland <- grades_data %>%
+  filter(fylkesnr == 46) %>%
+  group_by(aar,enhetnavn) %>%
+  summarize(mean_grade = mean(snittkarakter, na.rm = TRUE))
+
+
+
+
+ dropouts_Vestland <- dropouts_Vestland %>%
+  rename("enhetnavn" = "EnhetNavn")
+ dropouts_Vestland <- dropouts_Vestland %>%
+ rename("aar" = "school_year")
+
+
+ grade_dropout <- left_join(mean_grade_Vestland, dropouts_Vestland, by = c("enhetnavn", "aar"))
+
+# merging the two dataset into one for dropout and the grades plus the student survey
+
+
+Survey_final <- read_csv("Survey_final.csv")
+ Surveyfinal <- Survey_final %>%
+   rename("enhetnavn"="Year")
+ grade_dropout <- merge(grade_dropout, Surveyfinal, by = "enhetnavn")
+
+#define response variable
+y <- grade_dropout$andel
+
+#define matrix of predictor variables
+x <- data.matrix(grade_dropout[, c('mean_grade','Trives du pÂ skolen?', 'Er du interessert i Â lÊre pÂ skolen?', 'Jeg gleder meg til Â gÂ pÂ skolen', 'Jeg fÂr god hjelp til leksene mine hjemme', "Prioriterer du Â bruke tid pÂ skolearbeidet (bÂde arbeid i timene og lekser)?","Det er god arbeidsro i timene" )])
+
+# Step 2: Fit the Lasso Regression Model
+
+library(glmnet)
+anyNA(x)
+anyNA(y)
+sgd <- na.omit(data.frame(x, y))
+x_clean <- sgd[, -ncol(sgd)]
+y_clean <- sgd[, ncol(sgd)]
+x_clean <- as.matrix(x_clean)
+library(Matrix)
+x_clean_sparse <- Matrix::Matrix(x_clean)
+#perform k-fold cross-validation to find optimal lambda value
+cv_model <- cv.glmnet(x_clean, y_clean, alpha = 1)
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.min
+best_lambda
+
+#produce plot of test MSE by lambda value
+plot(cv_model) 
+
+#find coefficients of best model
+best_model <- glmnet(x_clean, y_clean, alpha = 1, lambda = best_lambda)
+coef(best_model)
+
+
+```
+
+This model seems to be valid, we see that on variables such as "do you like it a school" the higher the score the less likely it is that school will have a high dropout rate. since the prediction seems so clear we will investigate how the variables spreads in vestlandet.
+
+we must admit to have cheated a bit, using the student survey before we have even wrangled it, so here comes some data wrangling and the student survey:
+
+```{r}
+
+#making a big dataset of all our data so it will be tidy and usable
+vgo <- readRDS("~/Documents/ISSSV1337-Hackathon/vgo.RDS")
+vgo_karakter <- vgo[["grades"]]
+student <-vgo[["students"]]
+
+vgo_karakter <- vgo_karakter %>% filter(type == "Begge")
+
+
+Grade <- vgo_karakter %>%
+  group_by(enhetnavn, aar, organisasjonsnummer) %>%
+  summarise(mean_grade = mean(snittkarakter, na.rm = T))
+
+Grade2022 <- filter(Grade, aar == "2021-22")
+
+Grade2022 <-Grade2022 %>% left_join(Vgo_schools, by = "organisasjonsnummer")
+
+bigdata <- Grade2022 %>% left_join(sentralitet_2023_2024_kommuner, by = c("kommunenr" = "knr.2024"))
+
+bigdata$type <- ifelse(grepl("skule$|skole$", bigdata$enhetnavn), "Public", "Private")
+
+ssb_inntekt <- read.xlsx("ssb inntekt .xlsx")
+
+ssb_inntekt <- ssb_inntekt %>%
+  separate(Kommune, into = c("Kommune_Numbers", "Kommune_Name"), sep = " ", remove = FALSE)
+
+bigdata <- bigdata %>% left_join(ssb_inntekt, by = c("kommunenr" = "Kommune_Numbers"))
+
+bigdata <- bigdata %>% select( -c( internettadresse, epost, naeringskode_beskrivelse, karakteristikk))
+dropout <- read_csv("dropout.csv")
+dropout <- dropout %>% filter(school_year == "2021-22")
+
+dropout_main <- dropout %>% select(c(Organisasjonsnummer,andel,antall))
+
+bigdata <- bigdata %>% left_join(dropout_main, by = c("organisasjonsnummer" = "Organisasjonsnummer"))
+
+student <- student %>% filter(student$aar == "2021-22")
+student <- student %>% filter(student$type == "Begge")
+
+student$organisasjonsnummer <- as.character(student$organisasjonsnummer)
+
+student <- student %>% na.omit(student)
+
+student <- student %>% select(- aar)
+
+bigdata <- bigdata %>% left_join(student, by = "organisasjonsnummer")
+
+bigdata <- bigdata %>% select(-c(type.y, enhetnavn.y))
+# wow very tidy! 
+#Now wrangeling and joing the student survey 
+
+
+
+```
+
+For some reason the "read_excel" function does not work, i have prevously used openxlsx instead but it does not work on a ".xls" file, therefor i will just show this code and not run it. then load it in manually before outside the rendering
+
+```{r eval=FALSE}
+
+Elevundersokelsen <- read_excel("Elevundersokelsen.xls")
+
+Elevundersokelsen <- Elevundersokelsen %>%
+  filter(SvaralternativKode == "Alle")
+
+Elevundersokelsen <- Elevundersokelsen %>% 
+  select(-Temakode, -Spoersmaalkode, SvaralternativKode, -Temanavn, -SvaralternativNavn, - SvaralternativKode)
+
+
+flipped_dataset <- Elevundersokelsen %>%
+  pivot_longer(cols = starts_with("2021-"), names_to = "Date", values_to = "Value")
+
+Elevundersokelsen <- flipped_dataset %>%
+  pivot_wider(names_from = Spoersmaalnavn, values_from = Value)
+
+Elevundersokelsen <- Elevundersokelsen %>% 
+  select(-`Alle sp¯rsmÂl`)
+
+Elevundersokelsen$Date <- sapply(strsplit(Elevundersokelsen$Date, "\\."), function(x) paste(x[-(1:3)], collapse = "."))
+
+Elevundersokelsen$Date <- sub("\\..*", "", Elevundersokelsen$Date)
+
+Elevundersokelsen$Date <- gsub("Â", "å", Elevundersokelsen$Date)
+Elevundersokelsen$Date <- gsub("¯", "ø", Elevundersokelsen$Date)
+Elevundersokelsen$Date <- gsub("≈", "Å", Elevundersokelsen$Date)
+
+Elevundersokelsen <- apply(Elevundersokelsen, 2, function(x) gsub("\\*", NA, x))
+
+Elevundersokelsen <- as.data.frame(Elevundersokelsen)
+
+i <- c(2, 64)    
+
+Elevundersokelsen[ , i] <- apply(Elevundersokelsen[ , i], 2, function(x) as.numeric(as.character(x)))
+
+Elevundersokelsen <- Elevundersokelsen %>%
+  mutate(across(-Date, ~ as.numeric(as.character(.))))
+
+#write.csv(Elevundersokelsen, file = "StudenSurveyNorwat.csv", row.names = FALSE)
+#write.csv(bigdata, file = "Bigdata.csv", row.names = FALSE)
+
+bigdata$enhetnavn.x
+
+Bigdata <- bigdata %>% left_join(Elevundersokelsen, by = c("enhetnavn.x" = "Date"))
+```
+
+### Plotting the survey in Vestlandet
+
+```{r}
+
+Bigdata <- read_csv("Bigdata.csv")
+
+bigvest <- Bigdata %>% filter(fylkesnr == 46)
+
+bigvest <- bigvest[complete.cases(bigvest$andel), ]
+bigvest <- bigvest[complete.cases(bigvest$`Trives du pÂ skolen?`), ]
+
+
+
+bigvest$enhetnavn.x <- reorder(bigvest$enhetnavn.x, bigvest$`Trives du pÂ skolen?`, FUN = median)
+
+# Create the plot
+ggplot(bigvest, aes(y = `Trives du pÂ skolen?`, x = enhetnavn.x)) +
+  geom_bar(stat = "identity") + 
+  xlab("School") + 
+  ylab("Question: Do you enjoy school?") + 
+  ggtitle("Student wellbeing in high schools in Vestlandet 2022") + 
+  theme_bw() + 
+  coord_flip()
+
+ggplot(bigvest, aes(y = mean_grade, x = `Trives du pÂ skolen?`)) + 
+  geom_jitter() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() + 
+  xlab("Do you enjoy school?") +
+  ggtitle("correlation between enjoying school and mean grade in vestlandet")
+
+
+glm_well <- lm(mean_grade ~ `Trives du pÂ skolen?`, 
+               data = bigvest) 
+
+
+stargazer(glm_well, type = "text")
+
+```
+
+```{r}
+
+final_data <- read.csv("Bigdata.csv")
+library(broom)
+library(stargazer)
+final_data<-final_data %>% 
+  rename("Do.you.have.company.during.breaks?." = "Har.du.noen.medelever.Â.vÊre.sammen.med.i.friminuttene.",
+         "Are.you.interested.in.being.a.teacher" = "Er.du.interessert.i.Â.lÊre.pÂ.skolen.",
+         Do.you.like.schoolwork. = "Hvor.godt.liker.du.skolearbeidet.",
+         You.look.forward.to.school. = "Jeg.gleder.meg.til.Â.gÂ.pÂ.skolen",
+         Do.you.think.schoowork.is.important = "Prioriterer.du.Â.bruke.tid.pÂ.skolearbeidet..bÂde.arbeid.i.timene.og.lekser..",
+         You.work.even.if.schoolwork.is.difficult = "NÂr.jeg.arbeider.med.skolefag..fortsetter.jeg.Â.jobbe.selv.om.det.jeg.skal.lÊre.er.vanskelig",
+         My.family.is.invested.in.my.school.work. = "Hjemme.viser.de.interesse.for.det.jeg.gj.r.pÂ.skolen",
+         I.get.help.with.my.homework. = "Jeg.fÂr.god.hjelp.til.leksene.mine.hjemme",
+         My.family.encourages.me.with.schoolwork. = "Hjemme.oppmuntrer.de.voksne.meg.i.skolearbeidet",
+         Your.parents.have.high.academic.expectations. = "Hjemme.forventer.de.at.jeg.gj.r.sÂ.godt.jeg.kan.pÂ.skolen",
+         Do.your.teachers.care.about.you = "Opplever.du.at.lÊrerne.dine.bryr.seg.om.deg.",
+         Do.your.teachers.believe.you.can.succeed = "Opplever.du.at.lÊrerne.dine.har.tro.pÂ.at.du.kan.gj.re.det.bra.pÂ.skolen.",
+         Your.teachers.treat.you.with.respect = "Opplever.du.at.lÊrerne.behandler.deg.med.respekt.",
+         Your.teachers.help.you.with.your.problems. = "NÂr.jeg.har.problemer.med.Â.forstÂ.arbeidsoppgaver.pÂ.skolen..fÂr.jeg.god.hjelp.av.lÊrerne",
+         You.can.ask.the.teacher.for.help = "Jeg.ber.lÊreren.om.hjelp.hvis.det.er.noe.jeg.ikke.fÂr.til",
+         Your.teachers.are.good.at.helping. = "LÊrerne.hjelper.meg.slik.at.jeg.forstÂr.det.jeg.skal.lÊre",
+         Are.classes.peaceful. = "Det.er.god.arbeidsro.i.timene",
+         Your.class.thinks.academic.success.is.good = "I.klassen.min.synes.vi.det.er.viktig.Â.jobbe.godt.med.skolearbeidet",
+         Teachers.view.mistakes.positively. = "Mine.lÊrere.synes.det.er.greit.at.vi.elever.gj.r.feil.fordi.vi.kan.lÊre.av.det",
+         Are.you.challenged.enough.in.school. = "FÂr.du.nok.utfordringer.pÂ.skolen.",
+         Can.you.do.homework.yourself = "FÂr.du.lekser.som.du.greier.Â.gj.re.pÂ.egen.hÂnd.",
+         Is.most.of.your.schoolwork.individual.work = "Tenk.pÂ.nÂr.du.fÂr.arbeidsoppgaver.pÂ.skolen.som.du.skal.gj.re.pÂ.egen.hÂnd..Hvor.ofte.klarer.du.oppgavene.alene.",
+         Are.you.able.to.understand.lectures.="Tenk.pÂ.nÂr.lÊreren.gÂr.gjennom.og.forklarer.nytt.stoff.pÂ.skolen..Hvor.ofte.forstÂr.du.det.som.lÊreren.gjennomgÂr.og.forklarer.",
+         Do.you.think.school.education.is.important.= "Jeg.synes.det.vi.lÊrer.pÂ.skolen.er.viktig",
+         )
+selected_data <- final_data %>% 
+  subset(select = c(27:50, mean_grade))
+
+lm_model_qualitative <- lm(mean_grade ~ ., data = selected_data)
+
+tidy_lm_model <- tidy(lm_model_qualitative)
+
+
+#install.packages("coefplot")
+library(coefplot)
+
+coefplot(lm_model_qualitative)
+```
+
+In the above graph, we tried to analyse the effect of qualitative variables on mean grade . The further the line and the dot is to the right side of the x axis, the more positive the effect of our variable on grades. If it is towards the left, the effect is more negative the effect on grade.
+
+We see that the question "Trives du på skolen?" or "do you enjoy school?" is quite even across schools. We also see that correlation between mean grade and the wellbeing also correlate quite a bit in Vestlandet.
+
+## Clustering analysis
+
+In 2014 the Norwegian department of knowledge published a NOU (Norwegian Public Investigation) called "Students learning in the future school" this report focuses on how students should learn in the future. It argues that depth learning instead of surface learning should help the students learn better.
+
+*"depth learning is about students gradually developing their understanding of concepts and relationships within a subject area. It is also about understanding themes and problems that cut across subject or knowledge areas. Deep learning involves students using their ability to analyse, solve problems and reflect on their own learning to construct a comprehensive and lasting understanding." (source)*
+
+This way of learning is drastically different from the surface level of learn that one could say "describes" the normal school. The school where you don´t really need to understand but rather "listen and remember" what the teacher tells you. Depth learning sounds (at least to us) great, it seems like a better way to learn things. Yet it has faced some backlash by the teachers themself (find source) where even though they might agree with the principles of deep learning they argue that they do not have the capacity to follow through with the deep learning in today's school. this seems understandable given the prerequisites the report gives for good learning such as: active student interaction, education based on students prior knowledge, the teaching environment takes the students relations, emotions and motivations into account. In an article in Forskersonen teacher Morten Brattbakk argues that Norwegian schools do not have the capacity to use customized learning in everyday teaching, that it favoures students from high-education families, that it creates a lot more work (often unpaid) for already overworked teachers and the teachers do not necessarily have the competence to use the deep learning pedagogy in school. For example he criticizes the idea that *""more freedom of choice, both in subjects, pupils' participation and which projects they can work on. Project work, for example, is perfectly fine, but the topics are often already chosen for the students. Why not let the students choose for themselves?"*
+
+*He does not seem to think about the fact that project work with choices is far from a way to reach all students. On the contrary, it requires so much professional insight to make such choices that for many students it is a very demanding and thus exclusionary working method." (Brattbakk, 2014)*
+
+To do this analysis we need to expand back into the whole of Norway in order to get more data for the analysis.
+
+```{r}
+
+library(tidymodels)
+library(tidyclust)
+
+Bigdata$Employee_per_student <- Bigdata$antall_ansatte / Bigdata$antall_elever 
+Bigdata$Student_per_employee <- Bigdata$antall_elever / Bigdata$antall_ansatte
+
+bigdata2 <- Bigdata[complete.cases(Bigdata$mean_grade), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`Opplever du at lÊrerne dine bryr seg om deg?`), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`NÂr jeg har problemer med Â forstÂ arbeidsoppgaver pÂ skolen, fÂr jeg god hjelp av lÊrerne`), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`Jeg ber lÊreren om hjelp hvis det er noe jeg ikke fÂr til`), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`Mine lÊrere synes det er greit at vi elever gj¯r feil fordi vi kan lÊre av det`), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`Tenk pÂ nÂr lÊreren gÂr gjennom og forklarer nytt stoff pÂ skolen. Hvor ofte forstÂr du det som lÊreren gjennomgÂr og forklarer?`), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`Snakker lÊrerne med deg om hva du b¯r gj¯re for Â bli bedre i fagene?`), ]
+bigdata2 <- bigdata2[complete.cases(bigdata2$`Opplever du at lÊrerne dine har tro pÂ at du kan gj¯re det bra pÂ skolen?`), ]
+
+ggplot(bigdata2, aes(y = mean_grade, x = Employee_per_student)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() + 
+  ggtitle("Employees per student effect on mean grade")
+```
+
+In this plot we see that the correlation between the grades and the employees per student does not occur. It does not seem that having more employees creates higher grades. This seems quite un-intuitive, for our opinion it "should" seem to increase the grades. Still this does not take into account "what type" of teachers we are dealing with.
+
+When we take into account that teachers are different, it opens up a new world of possibilities. In the vision of depth learning it seems like the role of teacher is quite important, therefore can we use the student survey in order to put the teachers of each school into different groups. we believe that the ranking on questions such as:
+
+-   Do your teachers care about you?
+-   Do your teachers believe you can do well in school?
+-   Do your teachers treat you with respect?
+-   When I have trouble understanding school assignments, I get good help from teachers.
+-   I ask the teacher for help if there's something I don't understand.
+-   Teachers help me understand what I'm supposed to learn.
+-   Think about when the teacher goes through and explains new material in school. How often do you understand what the teacher is going through and explaining?
+-   Do teachers talk with you about what you should do to improve in subjects?
+-   Do teachers explain the goals in the different subjects in a way that you understand them?
+
+Is a good measurement of if the teachers are able to utilize depth learning in their teacher. For example if the students feel like the teacher do not care about them, don´t help them, don´t understand the subject or don´t respect them, it would seem impossible for the student to learn much from depth learning.
+
+```{r}
+set.seed(2002) 
+cluster <- kmeans(
+  bigdata2 %>% 
+    select( `Opplever du at lÊrerne dine bryr seg om deg?`, `Opplever du at lÊrerne dine har tro pÂ at du kan gj¯re det bra pÂ skolen?`, `Opplever du at lÊrerne behandler deg med respekt?`, `NÂr jeg har problemer med Â forstÂ arbeidsoppgaver pÂ skolen, fÂr jeg god hjelp av lÊrerne`, `Jeg ber lÊreren om hjelp hvis det er noe jeg ikke fÂr til`,`LÊrerne hjelper meg slik at jeg forstÂr det jeg skal lÊre`, `Tenk pÂ nÂr lÊreren gÂr gjennom og forklarer nytt stoff pÂ skolen. Hvor ofte forstÂr du det som lÊreren gjennomgÂr og forklarer?`, `Snakker lÊrerne med deg om hva du b¯r gj¯re for Â bli bedre i fagene?`, `Forklarer lÊrerne hva som er mÂlene i de ulike fagene slik at du forstÂr dem?`), 
+  centers = 4)
+
+
+
+
+kmeans_spec <- k_means(num_clusters = 4) # Defining the type of model, k_means with
+                                         # 9 clusters
+kmeans_fit <- kmeans_spec %>% 
+  fit(~  `Opplever du at lÊrerne dine bryr seg om deg?` + `Opplever du at lÊrerne dine har tro pÂ at du kan gj¯re det bra pÂ skolen?` + `Opplever du at lÊrerne behandler deg med respekt?` + `NÂr jeg har problemer med Â forstÂ arbeidsoppgaver pÂ skolen, fÂr jeg god hjelp av lÊrerne` + `Jeg ber lÊreren om hjelp hvis det er noe jeg ikke fÂr til` + `LÊrerne hjelper meg slik at jeg forstÂr det jeg skal lÊre` +`Tenk pÂ nÂr lÊreren gÂr gjennom og forklarer nytt stoff pÂ skolen. Hvor ofte forstÂr du det som lÊreren gjennomgÂr og forklarer?` + `Snakker lÊrerne med deg om hva du b¯r gj¯re for Â bli bedre i fagene?` + `Forklarer lÊrerne hva som er mÂlene i de ulike fagene slik at du forstÂr dem?`, # Which variables we want to use
+      data = bigdata2) 
+
+
+bigdata2 %>% 
+  bind_cols(cluster$cluster) %>% 
+  rename("cluster" = "...91") %>%
+  ggplot(aes(`Opplever du at lÊrerne behandler deg med respekt?`,`Jeg fÂr hjelp av lÊrerne til Â tenke gjennom hvordan jeg utvikler meg i faget` , color = as.factor(cluster))) +
+  geom_jitter() +
+  labs(x = "Teachers treat me with respect", y = "I get help from teachers in order to improve in my subjects") +
+  theme(axis.title = element_text()) + 
+  theme_bw() + 
+  ggtitle("Groups of teacher ratings")
+```
+
+We now get four clusters, cluster 1 indicates a low teacher ranking on the selected variable, 2 and 3 indicate a medium ranking and cluster 4 indicates a high ranking.
+
+Next we test if our assumptions about how teachers do not have capacity to use depth learning in order to increase the grades and that we should increase the number of teachers were the "teacher score is low" are valid.
+
+We plot all of the groups separately and then look at the correlation between the mean grade of the school and the employees per student and see if it changes in the different clusters. We are using the grades as the a measurement of success on the depth learning, this does not mean that we believe that it is easier to get good grades when the teachers are using these methods in it self. Rather we believe that it could be a good indicator because the exams should be written and suited for this type of learning.
+
+```{r}
+
+bigdata2 %>% 
+  bind_cols(kmeans_fit$fit$cluster) %>%
+  rename("cluster" = "...91") %>% 
+  filter(cluster %in% c(1, 2, 3, 4)) %>%  # Filter for clusters 1, 2, 3, and 4
+  ggplot(aes(Student_per_employee, mean_grade, colour = as.factor(cluster))) +
+  geom_jitter() +
+  geom_smooth(method = "lm") +
+  labs(x = "Student per employee", y = "Mean grade") +
+  theme_bw() + 
+  facet_wrap(~cluster) + 
+  ggtitle("Students per teacher effect on mean grade in different teacher rating groups")
+
+
+bigdata2 %>% 
+  bind_cols(kmeans_fit$fit$cluster) %>%
+  rename("cluster" = "...91") %>% 
+  filter(cluster %in% c(1, 2, 3, 4)) %>%  # Filter for clusters 1, 2, 3, and 4
+  ggplot(aes(Student_per_employee, andel, colour = as.factor(cluster))) +
+  geom_jitter() +
+  geom_smooth(method = "lm") +
+  labs(x = "Student per employee", y = "Percentage of dropouts") +
+  theme_bw() + 
+  facet_wrap(~cluster) + 
+  ggtitle("Students per teacher effect on dropout percentage in different teacher rating groups")
+
+```
+
+it now firstly tells a very different story than with all the group combined. In the group with a low score (1 and 2) on teachers it seems like the more teachers you have lower the grade becomes. In the group with a high score (3 and 4) on teachers the correlation is positive, in the sense that more teachers per student creates better grades. this also tells the opposite story of what we in the group presumed was the case.
+
+The main point that we may take from this is that it does not neceserally help on the grades to spend more money on hiring more teachers if the teachers are already preforming badly in their depth learning, it could be more effective to spend that time training teachers in the pedagogical methods of depth learning.
+
+We also see the same pattern when we plot the dropout rate. In the groups with the poorly rated teachers, less teachers seem to indicate fewer dropouts
+
+```{r}
+
+map_data <- st_read("gadm41_NOR_shp/gadm41_NOR_1.shp")
+student_eval <- read_csv("student_eval.csv")
+
+map_data <- map_data %>% 
+  mutate(NAME_1 = ifelse(NAME_1 %in% c("Akershus", "Buskerud", "Østfold"), "Viken", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Hedmark", "Oppland"), "Innlandet", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Vestfold", "Telemark"), "Vestfold og Telemark", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Aust-Agder", "Vest-Agder"), "Agder", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Nord-Trøndelag", "Sør-Trøndelag"), "Trøndelag", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Troms", "Finnmark"), "Troms og Finnmark", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Hordaland", "Sogn og Fjordane"), "Vestland", NAME_1),
+         NAME_1 = ifelse(NAME_1 %in% c("Nordland"), "Nordland - Nordlánnda", NAME_1))
+
+data <- student_eval
+
+# Perform linear regression (lm analysis) for each fylke
+correlation_data <- data %>%
+  group_by(fylke) %>%
+  summarise(correlation = cor(sum, snittkarakter, use = "complete.obs"),
+            lm_model = list(lm(snittkarakter ~ sum, data = .)))
+
+# Merge the correlation data with the map data
+map_data <- left_join(map_data, correlation_data, by = c("NAME_1" = "fylke"))
+
+# Create the choropleth map using ggplot2
+library(ggplot2)
+ggplot() +
+  geom_sf(data = map_data, aes(fill = correlation), color = "white") +
+  scale_fill_gradient(name = "Correlation", 
+                      low = "yellow", high = "darkred") +  
+  labs(title = "Correlation Map for Sum and Snittkarakter",
+       subtitle = "Effect of Spending (sum) on Average Grade (snittkarakter) by District (Fylke)") +
+  theme_minimal()
+
+
+```
+
+## limitations and further investigation 
+
+We faced some limitations during this project. First of all some school data is prohibited from the public, especially the student survey where data about smaller schools are hidden from the public. This might have caused biases in our models. We also faced the classic problem of too few observations. There is a limited number of schools which makes the models not as accurate or reliable as they could have been. The student survey might also have been flawed in the sense that answers of some students might have been based on the grades they already get.
+
+We believe it would be wise to further investigate the impact of depth learning in schools, and how the Norwegian government might help teachers in order to make schools performing better.
+
+## References and data:
+
+World Bank Open Data. (n.d.). *World Bank Open Data.* <https://data.worldbank.org/indicator/NY.GDP.DEFL.KD.ZG?locations=NO>
+
+GADM. (n.d.).  https://gadm.org/download_country.html
+
+Norway GDP Per Capita 1960-2023. (n.d.). MacroTrends. https://www.macrotrends.net/countries/NOR/norway/gdp-per-capita
+
+Brattbakk, M. (2023, May 4). *--- At skolen ikke klarer å drive tilpasset opplæring, har jeg og de fleste lærere i norsk skole visst i mange år. Forskersonen.* https://forskersonen.no/debattinnlegg-meninger-opplaeringsloven/at-skolen-ikke-klarer-a-drive-tilpasset-opplaering-har-jeg-og-de-fleste-laerere-i-norsk-skole-visst-i-mange-ar/2193130
+
+06944: Inntekt for husholdninger, etter husholdningstype. Antall og median. Delområder (K) (B) 2005 - 2021. Statistikkbanken. (n.d.). SSB. https://www.ssb.no/statbank/table/06944/tableViewLayout1/
+
+Elevundersøkelsen. (n.d.). https://www.udir.no/tall-og-forskning/brukerundersokelser/elevundersokelsen/
+
+Sentralitetsindeksen - Oppdatering med 2020-kommuner. (2020, February 27). *ssb.no.* https://www.ssb.no/befolkning/artikler-og-publikasjoner/sentralitetsindeksen.oppdatering-med-2020-kommuner
